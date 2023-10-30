@@ -2,7 +2,10 @@ package msobjectstore
 
 import (
 	"context"
-	"fmt"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/osclient"
 	"github.com/k3s-io/kine/pkg/server"
@@ -11,124 +14,321 @@ import (
 )
 
 const (
-	MockRev = 1
+	DefaultRevision   = 1
+	DefaultLease      = int64(1)
+	defaultSlowMethod = 500 * time.Millisecond
+
+	apiServerResourceKeyPrefix = "/registry/sample-apiserver/gateway.mulesoft.com/"
 )
 
-type Driver struct {
-	//conn *nats.Conn
-	kv osclient.KV
+type driver struct {
+	store         osclient.ObjectStoreConsumer
+	slowThreshold time.Duration
+	mut           sync.RWMutex
+	revision      atomic.Int64
 }
 
-func New(_ context.Context, _ string, _ tls.Config) (server.Backend, error) {
-	logrus.Info("msobjectstore Driver.New()")
-	return &Driver{}, nil
+func New(_ context.Context, _ string, _ tls.Config) (be server.Backend, err error) {
+	logrus.Info("msobjectstore driver.New()")
+
+	return &driver{
+		store:         osclient.NewConsumer(),
+		slowThreshold: defaultSlowMethod,
+	}, nil
 }
 
-func (d *Driver) Start(_ context.Context) error {
-	logrus.Info("msobjectstore Driver.Start()")
-	return nil
+func (d *driver) Start(_ context.Context) (err error) {
+	logrus.Info("MS-ObjectStore Driver is starting...")
+
+	d.revision.Store(0)
+
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "msobjectstore driver.START: err=%v, duration=%s"
+		d.logMethod(dur, fStr, err, dur)
+	}()
+
+	_, err = d.store.HealthCheck()
+
+	return
 }
 
-func (d *Driver) Get(_ context.Context, key, _ string, _, revision int64) (int64, *server.KeyValue, error) {
-	logrus.Infof("msobjectstore Driver.Get(key:%s, revision:%d)\n", key, revision)
+func (d *driver) Get(_ context.Context, key, rangeEnd string, limit, revision int64) (rev int64, val *server.KeyValue, err error) {
+	d.mut.RLock()
+	defer d.mut.RUnlock()
 
-	v, e := d.kv.Get(key)
+	/*
+		start := time.Now()
+		defer func() {
+			dur := time.Since(start)
+			size := 0
+			if val != nil {
+				size = len(val.Value)
+			}
+			fStr := "msobjectstore driver.GET %s, rev=%d, ignored:rangeEnd=%s, ignored:limit=%d => revRet=%d, kv=%v, size=%d, err=%v, duration=%s"
+			d.logMethod(dur, fStr, key, revision, rev, rangeEnd, limit, val != nil, size, err, dur)
+		}()
+	*/
 
-	return 0, v, e
-	//return 666, &server.KeyValue{
-	//	Key:            "keyMock1",
-	//	CreateRevision: 0,
-	//	ModRevision:    0,
-	//	Value:          []byte(msg),
-	//	Lease:          0,
-	//}, nil
-}
+	//rev = d.revision.Load()
+	rev = DefaultRevision
 
-func (d *Driver) Create(_ context.Context, key string, value []byte, lease int64) (int64, error) {
-	logrus.Infof("msobjectstore Driver.Create(key:%s, value:%+v)", key, value)
-
-	createValue := &server.KeyValue{
-		Key:            key,
-		CreateRevision: MockRev,
-		ModRevision:    MockRev,
-		Value:          value,
-		Lease:          lease,
-	}
-
-	if e := d.kv.Add(key, createValue); e != nil {
-		return MockRev, e
-	}
-
-	return MockRev, nil
-}
-
-func (d *Driver) Update(_ context.Context, key string, value []byte, revision, lease int64) (int64, *server.KeyValue, bool, error) {
-	logrus.Infof("msobjectstoreDriver.Update(key:%s, value:%+v, lease:%d, revision:%d)\n", key, value, lease, revision)
-
-	updateValue := &server.KeyValue{
-		Key:            key,
-		CreateRevision: MockRev,
-		ModRevision:    MockRev,
-		Value:          value,
-		Lease:          lease,
-	}
-
-	if e := d.kv.Update(key, updateValue); e != nil {
-		return 0, nil, false, e
-	}
-
-	return 0, updateValue, true, nil
-
-}
-
-func (d *Driver) Delete(_ context.Context, key string, revision int64) (rev int64, val *server.KeyValue, success bool, e error) {
-	logrus.Infof("msobjectstore Driver.Delete(key:%s, revision:%d)\n", key, revision)
-	rev = 0
-	success = false
-
-	if val, e = d.kv.Get(key); e != nil {
-		return 0, nil, false, e
-	}
-
-	if e = d.kv.Delete(key); e != nil {
+	resourceType, resourceKey, err := parseKey(key)
+	if err != nil {
 		return
 	}
 
-	success = true
+	val, err = d.store.Get(resourceType, resourceKey, osclient.NotFoundIgnored)
 
 	return
 }
 
-func (d *Driver) List(_ context.Context, prefix, startKey string, limit, revision int64) (int64, []*server.KeyValue, error) {
-	//TODO implement me
-	logrus.Infof("msobjectstoreDriver.List(prefix:%s, startKey:%s, limit:%d, revision:%d)\n", prefix, startKey, limit, revision)
+func (d *driver) List(_ context.Context, prefix, startKey string, limit, revision int64) (rev int64, kvs []*server.KeyValue, err error) {
+	d.mut.RLock()
+	defer d.mut.RUnlock()
 
-	kvs := make([]*server.KeyValue, 0)
-	kvs = d.kv.List(prefix)
+	/*
+		start := time.Now()
+		defer func() {
+			dur := time.Since(start)
+			fStr := "msobjectstore driver.LIST prefix=%s, ignored:req-start=%s, req-limit=%d, ignored:req-rev=%d => mock:res-rev=%d, size-kvs=%d, res-err=%v, duration=%s"
+			d.logMethod(dur, fStr, prefix, startKey, limit, revision, rev, len(kvs), err, dur)
+		}()
+	*/
 
-	return MockRev, kvs, nil
-}
+	//rev = d.revision.Load()
+	rev = DefaultRevision
+	resourceBundleKey, resourceNamePrefix := parsePrefix(prefix)
 
-func (d *Driver) Count(_ context.Context, prefix string) (rev int64, count int64, e error) {
-	logrus.Infof("msobjectstoreDriver.Count(prefix:%s)\n", prefix)
-
-	rev = MockRev
-	count = 123
+	kvs, err = d.store.List(resourceBundleKey, resourceNamePrefix, limit)
 
 	return
 }
 
-func (d *Driver) Watch(_ context.Context, key string, revision int64) <-chan []*server.Event {
-	logrus.Infof("msobjectstoreDriver.Watch(key:%s, value:%+v, revision:%d)\n", key, revision)
+func (d *driver) Create(_ context.Context, key string, value []byte, lease int64) (rev int64, err error) {
+	d.mut.Lock()
+	defer d.mut.Unlock()
 
-	watchChan := make(chan []*server.Event, 100)
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "msobjectstore driver.CREATE %s, size=%d, lease=%d => rev=%d, err=%v, duration=%s"
+		d.logMethod(dur, fStr, key, len(value), lease, rev, err, dur)
+	}()
 
-	return watchChan
+	//d.revision.Add(1)
+	//rev = d.revision.Load()
+	rev = DefaultRevision
+	resourceType, resourceKey, err := parseKey(key)
+	if err != nil {
+		return
+	}
+
+	kv := newKeyValue(key, value, 0, 0)
+	err = d.store.Create(resourceType, resourceKey, kv)
+
+	return
 }
 
-func (d *Driver) DbSize(_ context.Context) (int64, error) {
-	fmt.Println("msobjectstore Driver.DbSize()")
+func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int64, kv *server.KeyValue, success bool, err error) {
+	start := time.Now()
+	d.mut.Lock()
+	defer d.mut.Unlock()
 
-	return int64(len(d.kv.Keys())), nil
+	defer func() {
+		dur := time.Since(start)
+		fStr := "msobjectstore driver.DELETE %s, ignored:revision=%d => rev=%d, kv=%d, success=%t, err=%v, duration=%s"
+		d.logMethod(dur, fStr, key, revision, revision, rev, err, dur)
+	}()
 
+	//d.revision.Add(1)
+	//rev = d.revision.Load()
+	rev = DefaultRevision
+
+	resourceType, resourceKey, err := parseKey(key)
+	if err != nil {
+		return
+	}
+
+	kv, err = d.store.Delete(resourceType, resourceKey)
+	success = err == nil
+
+	return
+}
+
+func (d *driver) Update(_ context.Context, key string, value []byte, revision, lease int64) (rev int64, val *server.KeyValue, success bool, err error) {
+	start := time.Now()
+	d.mut.Lock()
+	defer d.mut.Unlock()
+
+	defer func() {
+		dur := time.Since(start)
+		fStr := "msobjectstore driver.UPDATE %s, size=%d, ignored:lease=%d => rev=%d, success=%t, err=%v, duration=%s"
+		d.logMethod(dur, fStr, key, len(value), lease, rev, success, err, dur)
+	}()
+
+	//d.revision.Add(1)
+	//rev = d.revision.Load()
+	rev = DefaultRevision
+
+	resourceType, resourceKey, err := parseKey(key)
+	if err != nil {
+		return
+	}
+
+	kv := newKeyValue(key, value, 0, revision)
+	success, err = d.store.Update(resourceType, resourceKey, kv)
+
+	return
+}
+
+func (d *driver) Count(ctx context.Context, prefix string) (rev int64, count int64, err error) {
+	d.mut.RLock()
+	defer d.mut.RUnlock()
+
+	/*
+		start := time.Now()
+		defer func() {
+			dur := time.Since(start)
+			fStr := "msobjectstore driver.COUNT %s => rev=%d, count=%d, err=%v, duration=%s"
+			d.logMethod(dur, fStr, prefix, rev, count, err, dur)
+		}()
+	*/
+
+	rev = d.revision.Load()
+
+	var list []*server.KeyValue
+	if rev, list, err = d.List(ctx, prefix, "", 0, 0); err != nil {
+		return
+	}
+	count = int64(len(list))
+
+	return
+}
+
+func (d *driver) Watch(ctx context.Context, prefix string, revision int64) <-chan []*server.Event {
+	logrus.Infof("msobjectstoreDriver.Watch prefix=%s, ignored:revision=%d", prefix, revision)
+
+	ch := make(chan []*server.Event, 100)
+
+	bundleKey, _ := parsePrefix(prefix)
+	watcher, err := d.store.Watch(ctx, bundleKey, ch)
+	if err != nil {
+		return nil
+	}
+	watcher.Updates()
+	/*
+		go func() {
+			watcher.Updates()
+			for {
+				select {
+				case u := <-updates:
+					if len(u) > 0 {
+						logrus.Infof("watcher %s has an update incoming ", bundleKey)
+						ch <- u
+					}
+				case <-ctx.Done():
+					logrus.Infof("watcher: %s context cancelled", prefix)
+					if err := watcher.Stop(); err != nil {
+						logrus.Warnf("error stopping %s watcher: %v", prefix, err)
+					}
+					return
+				}
+			}
+		}()
+	*/
+
+	return ch
+}
+
+func (d *driver) DbSize(_ context.Context) (size int64, err error) {
+	d.mut.RLock()
+	defer d.mut.RUnlock()
+
+	// fmt.Println("msobjectstore driver.DbSize()")
+
+	return d.store.Size()
+}
+
+func (d *driver) logMethod(dur time.Duration, str string, args ...any) {
+	//if dur > d.slowThreshold {
+	//	logrus.Warnf(str, args...)
+	//} else {
+	//	logrus.Tracef(str, args...)
+	//}
+	logrus.Infof(str, args...)
+}
+
+func formatKey(s string) (key string) {
+	key = strings.TrimPrefix(s, "/")
+	key = strings.TrimSuffix(key, "/")
+	return strings.ReplaceAll(key, "/", "_")
+}
+
+func newKeyValue(key string, value []byte, cRev, mRev int64) *server.KeyValue {
+	return &server.KeyValue{
+		Key:            key,
+		CreateRevision: cRev,
+		ModRevision:    mRev,
+		Value:          value,
+		Lease:          DefaultLease,
+	}
+}
+
+/*
+parseKey parses ETCD key into MS Object Store keys
+key example:
+
+	/registry/sample-apiserver/gateway.mulesoft.com/apiinstances/default/object-store-api
+
+returns:
+
+	store: controlNodeStore
+	partition: controlNodePartition
+	resourceType: apiinstances
+	resourceKey: default_object-store-api = <resource-namespace>_<resource-name>
+
+	/registry/sample-apiserver/gateway.mulesoft.com/apiinstances/default/object-store-api-01
+*/
+func parseKey(key string) (resourceType, resourceKey string, err error) {
+	/*
+		start := time.Now()
+		defer func() {
+			dur := time.Since(start)
+			fStr := "msobjectstore driver.parseKey %s => resourceType=%s, resourceKey=%s, err=%v, duration=%s"
+			logrus.Infof(fStr, key, resourceType, resourceKey, err, dur)
+		}()
+	*/
+
+	if !strings.HasPrefix(key, apiServerResourceKeyPrefix) {
+		err = osclient.ErrInvalidKey
+		logrus.Errorf("%s: string %s has not prefix %s", err.Error(), key, apiServerResourceKeyPrefix)
+		return
+	}
+
+	tmpStr := strings.ReplaceAll(key, apiServerResourceKeyPrefix, "")
+	tmpSlc := strings.Split(tmpStr, "/")
+	if len(tmpSlc) != 3 {
+		err = osclient.ErrInvalidKey
+		logrus.Errorf("%s: slice %+v has size %v and not size %v", err.Error(), tmpSlc, len(tmpSlc), 3)
+		return
+	}
+
+	resourceType = tmpSlc[0]
+	resourceKey = tmpSlc[1] + "_" + tmpSlc[2]
+
+	return
+}
+
+func parsePrefix(prefix string) (bundleKey, resourceNamePrefix string) {
+	auxStr := strings.Replace(prefix, apiServerResourceKeyPrefix, "", 1)
+	auxSlc := strings.SplitN(auxStr, "/", 2)
+
+	bundleKey = auxSlc[0]
+	if len(auxSlc) == 2 {
+		resourceNamePrefix = formatKey(auxSlc[1])
+	}
+
+	return
 }
