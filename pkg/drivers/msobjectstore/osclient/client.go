@@ -1,12 +1,13 @@
 package osclient
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/k3s-io/kine/pkg/server"
+	"github.com/sirupsen/logrus"
 )
 
 type KV struct {
@@ -14,42 +15,72 @@ type KV struct {
 }
 
 func (c *KV) Get(key string) (value *server.KeyValue, err error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "osclient.Get, key=%v => kv=%v, err=%v, duration=%s"
+		logrus.Infof(fStr, key, value, err, dur)
+	}()
 
 	if v, ok := c.kv.Load(key); ok {
 		if v, ok := v.(server.KeyValue); ok {
 			return &v, nil
+		} else {
+			err = ErrKeyCastingFailed
 		}
-		return nil, errors.New("ErrKeyCastingFailed")
+	} else {
+		err = ErrKeyNotFound
 	}
 
-	return nil, errors.New("ErrKeyNotFound")
+	return
 }
 
 func (c *KV) Add(key string, value *server.KeyValue) (err error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "osclient.Add, key=%v => kv=%v, err=%v, duration=%s"
+		logrus.Infof(fStr, key, value, err, dur)
+	}()
+
 	if _, ok := c.kv.Load(key); !ok {
 		c.kv.Store(key, *value)
-		return nil
+		return
 	}
 
-	return errors.New("ErrKeyAlreadyExist")
+	return ErrKeyAlreadyExists
 }
 
 func (c *KV) Update(key string, value *server.KeyValue) (err error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "osclient.Update, key=%v => kv=%v, err=%v, duration=%s"
+		logrus.Infof(fStr, key, value, err, dur)
+	}()
+
 	if _, ok := c.kv.Load(key); ok {
 		c.kv.Store(key, *value)
-		return nil
+		return
 	}
 
-	return errors.New("ErrKeyNotFound")
+	return ErrKeyNotFound
 }
 
-func (c *KV) Delete(key string) error {
-	if _, ok := c.kv.Load(key); !ok {
+func (c *KV) Delete(key string) (err error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "osclient.Delete uodates, key=%s  duration=%s, err=%v"
+		logrus.Infof(fStr, key, dur, err)
+	}()
+
+	if _, ok := c.kv.Load(key); ok {
 		c.kv.Delete(key)
 		return nil
 	}
 
-	return errors.New("ErrKeyNotFound")
+	return ErrKeyNotFound
 }
 
 func (c *KV) Keys() (keyList []string) {
@@ -61,6 +92,13 @@ func (c *KV) Keys() (keyList []string) {
 }
 
 func (c *KV) List(prefix string) (valueList []*server.KeyValue) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "osclient.List, prefix=%s => kvs=%+v, duration=%s"
+		logrus.Infof(fStr, prefix, valueList, dur)
+	}()
+
 	c.kv.Range(func(key, value interface{}) bool {
 		var (
 			ok bool
@@ -68,16 +106,21 @@ func (c *KV) List(prefix string) (valueList []*server.KeyValue) {
 		)
 
 		if !strings.HasPrefix(fmt.Sprint(key), prefix) {
-			return false
+			//logrus.Infof("stringz '%s' do not starts with '%s'", key, prefix)
+			return true
 		}
 
 		if v, ok = value.(server.KeyValue); !ok {
-			return false
+			//logrus.Infof("key '%s' coud not be casto int keyvalue", key)
+			return true
 		}
 
+		//logrus.Infof("appending key '%s' with value: %+v", key, v)
 		valueList = append(valueList, &v)
 
 		return true
 	})
+
+	//logrus.Infof("returning valueList with %d values", len(valueList))
 	return
 }
