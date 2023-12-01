@@ -69,7 +69,7 @@ func (r *resourceWatcher) Updates() { // <-chan []*server.Event {
 			logrus.Infof("Updates: current state updates %d", len(updates))
 			r.chEvents <- updates
 		}
-
+		
 		for {
 			select {
 			case <-r.ctx.Done():
