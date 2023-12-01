@@ -222,12 +222,12 @@ func (d *driver) Watch(ctx context.Context, prefix string, revision int64) <-cha
 
 	ch := make(chan []*server.Event, 100)
 
-	/*	bundleKey, _ := parsePrefix(prefix)
-		watcher, err := d.store.Watch(ctx, bundleKey, ch)
-		if err != nil {
-			return nil
-		}
-		watcher.Updates()*/
+	bundleKey, _ := parsePrefix(prefix)
+	watcher, err := d.store.Watch(ctx, bundleKey, ch)
+	if err != nil {
+		return nil
+	}
+	watcher.Updates()
 	/*
 		go func() {
 			watcher.Updates()
