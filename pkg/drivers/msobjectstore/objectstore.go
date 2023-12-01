@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	LatestRevision    = 0
 	DefaultRevision   = 1
 	DefaultLease      = int64(1)
 	defaultSlowMethod = 500 * time.Millisecond
@@ -40,7 +41,7 @@ func New(_ context.Context, _ string, _ tls.Config) (be server.Backend, err erro
 func (d *driver) Start(_ context.Context) (err error) {
 	logrus.Info("MS-ObjectStore Driver is starting...")
 
-	d.revision.Store(0)
+	d.revision.Store(DefaultRevision)
 
 	start := time.Now()
 	defer func() {
@@ -58,28 +59,34 @@ func (d *driver) Get(_ context.Context, key, rangeEnd string, limit, revision in
 	d.mut.RLock()
 	defer d.mut.RUnlock()
 
-	/*
-		start := time.Now()
-		defer func() {
-			dur := time.Since(start)
-			size := 0
-			if val != nil {
-				size = len(val.Value)
-			}
-			fStr := "msobjectstore driver.GET %s, rev=%d, ignored:rangeEnd=%s, ignored:limit=%d => revRet=%d, kv=%v, size=%d, err=%v, duration=%s"
-			d.logMethod(dur, fStr, key, revision, rev, rangeEnd, limit, val != nil, size, err, dur)
-		}()
-	*/
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		size := 0
+		if val != nil {
+			size = len(val.Value)
+		}
+		fStr := "msobjectstore driver.GET %s, rev=%d, ignored:rangeEnd=%s, ignored:limit=%d => revRet=%d, kv=%t, size=%d, err=%v, duration=%s"
+		d.logMethod(dur, fStr, key, revision, rangeEnd, limit, rev, val != nil, size, err, dur)
+	}()
 
 	//rev = d.revision.Load()
-	rev = DefaultRevision
+	//rev = DefaultRevision
 
-	resourceType, resourceKey, err := parseKey(key)
-	if err != nil {
+	var resourceType, resourceKey string
+	if resourceType, resourceKey, err = parseKey(key); err != nil {
 		return
 	}
 
-	val, err = d.store.Get(resourceType, resourceKey, osclient.NotFoundIgnored)
+	if val, err = d.store.Get(resourceType, resourceKey); err != nil {
+		if err == osclient.ErrKeyNotFound {
+			rev = d.revision.Load()
+			err = nil
+		}
+		return
+	}
+
+	rev = val.ModRevision
 
 	return
 }
@@ -88,17 +95,15 @@ func (d *driver) List(_ context.Context, prefix, startKey string, limit, revisio
 	d.mut.RLock()
 	defer d.mut.RUnlock()
 
-	/*
-		start := time.Now()
-		defer func() {
-			dur := time.Since(start)
-			fStr := "msobjectstore driver.LIST prefix=%s, ignored:req-start=%s, req-limit=%d, ignored:req-rev=%d => mock:res-rev=%d, size-kvs=%d, res-err=%v, duration=%s"
-			d.logMethod(dur, fStr, prefix, startKey, limit, revision, rev, len(kvs), err, dur)
-		}()
-	*/
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "msobjectstore driver.LIST prefix=%s, ignored:req-start=%s, req-limit=%d, ignored:req-rev=%d => res-rev=%d, size-kvs=%t, res-err=%v, duration=%s"
+		d.logMethod(dur, fStr, prefix, startKey, limit, revision, rev, len(kvs), err, dur)
+	}()
 
-	//rev = d.revision.Load()
-	rev = DefaultRevision
+	rev = d.revision.Load()
+	//rev = DefaultRevision
 	resourceBundleKey, resourceNamePrefix := parsePrefix(prefix)
 
 	kvs, err = d.store.List(resourceBundleKey, resourceNamePrefix, limit)
@@ -117,15 +122,16 @@ func (d *driver) Create(_ context.Context, key string, value []byte, lease int64
 		d.logMethod(dur, fStr, key, len(value), lease, rev, err, dur)
 	}()
 
-	//d.revision.Add(1)
+	rev = d.revision.Add(1)
 	//rev = d.revision.Load()
-	rev = DefaultRevision
+
+	//rev = DefaultRevision
 	resourceType, resourceKey, err := parseKey(key)
 	if err != nil {
 		return
 	}
 
-	kv := newKeyValue(key, value, 0, 0)
+	kv := newKeyValue(key, value, rev, rev)
 	err = d.store.Create(resourceType, resourceKey, kv)
 
 	return
@@ -142,17 +148,21 @@ func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int6
 		d.logMethod(dur, fStr, key, revision, revision, rev, err, dur)
 	}()
 
-	//d.revision.Add(1)
-	//rev = d.revision.Load()
-	rev = DefaultRevision
+	// d.revision.Add(1)
+	// rev = d.revision.Load()
+	// rev = DefaultRevision
 
-	resourceType, resourceKey, err := parseKey(key)
-	if err != nil {
+	var resType, resKey string
+	if resType, resKey, err = parseKey(key); err != nil {
 		return
 	}
 
-	kv, err = d.store.Delete(resourceType, resourceKey)
-	success = err == nil
+	if kv, err = d.store.Delete(resType, resKey); err != nil {
+		return
+	}
+
+	rev = d.revision.Add(1)
+	success = true
 
 	return
 }
@@ -170,14 +180,16 @@ func (d *driver) Update(_ context.Context, key string, value []byte, revision, l
 
 	//d.revision.Add(1)
 	//rev = d.revision.Load()
-	rev = DefaultRevision
+	// rev = DefaultRevision
 
-	resourceType, resourceKey, err := parseKey(key)
-	if err != nil {
+	var resourceType, resourceKey string
+	if resourceType, resourceKey, err = parseKey(key); err != nil {
 		return
+
 	}
 
-	kv := newKeyValue(key, value, 0, revision)
+	rev = d.revision.Add(1)
+	kv := newKeyValue(key, value, 0, rev)
 	success, err = d.store.Update(resourceType, resourceKey, kv)
 
 	return
@@ -187,14 +199,12 @@ func (d *driver) Count(ctx context.Context, prefix string) (rev int64, count int
 	d.mut.RLock()
 	defer d.mut.RUnlock()
 
-	/*
-		start := time.Now()
-		defer func() {
-			dur := time.Since(start)
-			fStr := "msobjectstore driver.COUNT %s => rev=%d, count=%d, err=%v, duration=%s"
-			d.logMethod(dur, fStr, prefix, rev, count, err, dur)
-		}()
-	*/
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		fStr := "msobjectstore driver.COUNT %s => rev=%d, count=%d, err=%v, duration=%s"
+		d.logMethod(dur, fStr, prefix, rev, count, err, dur)
+	}()
 
 	rev = d.revision.Load()
 
@@ -212,12 +222,12 @@ func (d *driver) Watch(ctx context.Context, prefix string, revision int64) <-cha
 
 	ch := make(chan []*server.Event, 100)
 
-	bundleKey, _ := parsePrefix(prefix)
-	watcher, err := d.store.Watch(ctx, bundleKey, ch)
-	if err != nil {
-		return nil
-	}
-	watcher.Updates()
+	/*	bundleKey, _ := parsePrefix(prefix)
+		watcher, err := d.store.Watch(ctx, bundleKey, ch)
+		if err != nil {
+			return nil
+		}
+		watcher.Updates()*/
 	/*
 		go func() {
 			watcher.Updates()

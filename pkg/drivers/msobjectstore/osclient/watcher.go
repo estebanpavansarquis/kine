@@ -57,8 +57,8 @@ func (r *resourceWatcher) Updates() { // <-chan []*server.Event {
 	//ch := make(chan []*server.Event, updateBufferSize)
 
 	if updates, err = r.currentState(); err != nil {
-		logrus.Errorf("error checking current state at watcher %s with revision %s: %s", r.key, r.revision, err.Error())
 		if err != ErrKeyNotFound {
+			logrus.Errorf("error checking current state at watcher %s with revision %s: %s", r.key, r.revision, err.Error())
 			return
 		}
 		err = nil
@@ -131,6 +131,11 @@ func (r *resourceWatcher) checkForUpdates() (e []*server.Event, err error) {
 		newRevision string
 	)
 	if newBundle, newIndex, newRevision, err = r.consumer.GetBundle(r.key); err != nil {
+		if err != ErrKeyNotFound {
+			logrus.Errorf("error getting bundle watcher %s with revision %s: %s", r.key, r.revision, err.Error())
+		} else {
+			err = nil
+		}
 		return
 	}
 
@@ -138,7 +143,7 @@ func (r *resourceWatcher) checkForUpdates() (e []*server.Event, err error) {
 		logrus.Infof("Revision is up to date: " + newRevision)
 		return
 	}
-	logrus.Infof("Revision: " + r.revision + " was ourdated, new revision found: " + newRevision)
+	logrus.Infof("Revision: " + r.revision + " was outdated, new revision found: " + newRevision)
 
 	e = make([]*server.Event, 0)
 	if added, modified, deleted, diff := r.diff(newIndex); diff {
@@ -204,7 +209,6 @@ func (r *resourceWatcher) Stop() error {
 }
 
 func creationEvent(kv *server.KeyValue) *server.Event {
-	kv.CreateRevision = 10
 	return &server.Event{
 		Create: true,
 		Delete: false,
@@ -214,7 +218,6 @@ func creationEvent(kv *server.KeyValue) *server.Event {
 }
 
 func modificationEvent(kvOld, kv *server.KeyValue) *server.Event {
-	kv.ModRevision = 10
 	return &server.Event{
 		Create: false,
 		Delete: false,
@@ -224,7 +227,6 @@ func modificationEvent(kvOld, kv *server.KeyValue) *server.Event {
 }
 
 func deletionEvent(kv *server.KeyValue) *server.Event {
-	kv.ModRevision = 10
 	return &server.Event{
 		Create: false,
 		Delete: true,

@@ -25,7 +25,7 @@ const (
 )
 
 type ObjectStoreConsumer interface {
-	Get(bundleKey, resourceKey string, ignoreNotFound bool) (kvs *server.KeyValue, err error)
+	Get(bundleKey, resourceKey string) (kvs *server.KeyValue, err error)
 	List(bundleKey, resourcePrefix string, limit int64) (kvs []*server.KeyValue, err error)
 	Create(bundleKey, resourceKey string, kv *server.KeyValue) (err error)
 	Update(bundleKey, resourceKey string, kv *server.KeyValue) (ok bool, err error)
@@ -104,22 +104,15 @@ func (c *consumer) HealthCheck() (ok bool, err error) {
 	return
 }
 
-func (c *consumer) Get(bundleKey, resourceKey string, ignoreNotFound bool) (res *server.KeyValue, err error) {
+func (c *consumer) Get(bundleKey, resourceKey string) (res *server.KeyValue, err error) {
 	getCommand := c.newGetCmd(bundleKey)
 
 	var getResult types.GetResult
 	if getResult, err = c.objectStoreClient.GetValue(getCommand); err != nil {
-		if err == ErrKeyNotFound && ignoreNotFound {
-			err = nil
-		}
 		return
 	}
 
-	if res, err = parseKeyValue(getResult, resourceKey); err == ErrKeyNotFound && ignoreNotFound {
-		err = nil
-	}
-
-	return
+	return parseKeyValue(getResult, resourceKey)
 }
 
 func (c *consumer) List(bundleKey, resourcePrefix string, limit int64) (kvs []*server.KeyValue, err error) {
@@ -148,7 +141,7 @@ func (c *consumer) List(bundleKey, resourcePrefix string, limit int64) (kvs []*s
 
 func (c *consumer) Create(bundleKey, resourceKey string, kv *server.KeyValue) (err error) {
 	var getResult types.GetResult
-	resourceBundle := NewBundle()
+	resBundle := NewBundle()
 
 	getCommand := c.newGetCmd(bundleKey)
 	if getResult, err = c.objectStoreClient.GetValue(getCommand); err != nil {
@@ -161,32 +154,24 @@ func (c *consumer) Create(bundleKey, resourceKey string, kv *server.KeyValue) (e
 			err = ErrKeyAlreadyExists
 			return
 		}
-		if resourceBundle, err = parseBundle(getResult); err != nil {
+		if resBundle, err = parseBundle(getResult); err != nil {
 			return
 		}
 	}
 
-	resourceBundle.Upsert(resourceKey, kv)
+	resBundle.Upsert(resourceKey, kv)
 
 	var data string
-	if data, err = resourceBundle.Encode(); err != nil {
+	if data, err = resBundle.Encode(); err != nil {
 		return
 	}
-
-	var metadata map[string]string
-	if metadata, err = resourceBundle.Index(); err != nil {
-		return
-	}
-	currentTime := time.Now().String()
-	metadata["created"] = currentTime
-	metadata["updated"] = currentTime
 
 	storeCommand := c.newStoreCmd(
 		bundleKey,
 		stubs.NewObject(
 			stubs.WithKey(bundleKey),
 			stubs.WithBinaryValue(data),
-			stubs.WithMetadata(metadata),
+			stubs.WithMetadata(resBundle.Index()),
 		))
 	return c.objectStoreClient.Store(storeCommand)
 }
@@ -211,6 +196,14 @@ func (c *consumer) Update(bundleKey, resourceKey string, kv *server.KeyValue) (o
 	if resBundle, err = parseBundle(getResult); err != nil {
 		return
 	}
+
+	var oldkv *server.KeyValue
+	if oldkv, ok = resBundle.Get(resourceKey); !ok {
+		ok = false
+		return
+	}
+
+	kv.CreateRevision = oldkv.CreateRevision
 	resBundle.Upsert(resourceKey, kv)
 
 	var data string
@@ -218,20 +211,12 @@ func (c *consumer) Update(bundleKey, resourceKey string, kv *server.KeyValue) (o
 		return
 	}
 
-	var metadata map[string]string
-	if metadata, err = resBundle.Index(); err != nil {
-		return
-	}
-	currentTime := time.Now().String()
-	metadata["created"] = getResult.GetValue().Metadata["created"]
-	metadata["updated"] = currentTime
-
 	storeCommand := c.newStoreCmd(
 		bundleKey,
 		stubs.NewObject(
 			stubs.WithKey(bundleKey),
 			stubs.WithBinaryValue(data),
-			stubs.WithMetadata(metadata),
+			stubs.WithMetadata(resBundle.Index()),
 		))
 	err = c.objectStoreClient.Store(storeCommand)
 
@@ -274,7 +259,6 @@ func (c *consumer) Delete(bundleKey, resourceKey string) (kv *server.KeyValue, e
 
 	metadata := getResult.GetValue().Metadata
 	delete(metadata, resourceKey)
-	metadata["updated"] = time.Now().String()
 
 	storeCommand := c.newStoreCmd(
 		bundleKey,

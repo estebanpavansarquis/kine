@@ -17,7 +17,7 @@ type Bundled interface {
 	Get(string) (*server.KeyValue, bool)
 	List(string, int64) []*server.KeyValue
 	Encode() (string, error)
-	Index() (map[string]string, error)
+	Index() map[string]string
 	//Diff(Bundled) (added, modified, deleted []server.KeyValue, diff bool)
 }
 
@@ -56,7 +56,7 @@ func (b *resourceBundle) Encode() (data string, err error) {
 }
 
 // Index returns a map with every resource name as keys
-func (b *resourceBundle) Index() (index map[string]string, err error) {
+func (b *resourceBundle) Index() (index map[string]string) {
 	index = make(map[string]string, len(b.Data))
 
 	for k, v := range b.Data {
