@@ -3,7 +3,10 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"fmt"
 
+	"github.com/sirupsen/logrus"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 )
 
@@ -64,9 +67,47 @@ type KeyValue struct {
 	Lease          int64  `json:"lease,omitempty"`
 }
 
+func (e *KeyValue) String() string {
+	var value string
+	var f interface{}
+	if e.Value != nil {
+		if err := json.Unmarshal(e.Value, &f); err != nil {
+			logrus.Errorf("server KeyValue.String: unmarshall error %s", err.Error())
+		}
+	} else {
+		logrus.Error("server KeyValue.String: was nil")
+	}
+
+	return fmt.Sprintf(
+		"Key: %s;CreateRevision: %d; ModRevision: %d; Value: %s;Lease: %d;",
+		e.Key,
+		e.CreateRevision,
+		e.ModRevision,
+		value,
+		e.Lease,
+	)
+}
+
 type Event struct {
 	Delete bool
 	Create bool
 	KV     *KeyValue
 	PrevKV *KeyValue
+}
+
+func (e *Event) String() string {
+	var kv, prevkv string
+	if e.KV != nil {
+		kv = e.KV.String()
+	}
+	if e.PrevKV != nil {
+		prevkv = e.PrevKV.String()
+	}
+	return fmt.Sprintf(
+		"Delete: %t; Create: %t; KV: %v; PrevKV: %v;",
+		e.Delete,
+		e.Create,
+		kv,
+		prevkv,
+	)
 }

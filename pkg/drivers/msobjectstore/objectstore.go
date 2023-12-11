@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/osclient"
@@ -14,8 +13,6 @@ import (
 )
 
 const (
-	LatestRevision    = 0
-	DefaultRevision   = 1
 	DefaultLease      = int64(1)
 	defaultSlowMethod = 500 * time.Millisecond
 
@@ -26,22 +23,24 @@ type driver struct {
 	store         osclient.ObjectStoreConsumer
 	slowThreshold time.Duration
 	mut           sync.RWMutex
-	revision      atomic.Int64
 }
 
 func New(_ context.Context, _ string, _ tls.Config) (be server.Backend, err error) {
 	logrus.Info("msobjectstore driver.New()")
 
+	var c osclient.ObjectStoreConsumer
+	if c, err = osclient.NewConsumer(); err != nil {
+		return
+	}
+
 	return &driver{
-		store:         osclient.NewConsumer(),
+		store:         c,
 		slowThreshold: defaultSlowMethod,
 	}, nil
 }
 
 func (d *driver) Start(_ context.Context) (err error) {
 	logrus.Info("MS-ObjectStore Driver is starting...")
-
-	d.revision.Store(DefaultRevision)
 
 	start := time.Now()
 	defer func() {
@@ -50,7 +49,11 @@ func (d *driver) Start(_ context.Context) (err error) {
 		d.logMethod(dur, fStr, err, dur)
 	}()
 
-	_, err = d.store.HealthCheck()
+	if _, _, err = d.store.Status(); err != nil {
+		return
+	}
+
+	_, err = d.store.IncrementRevision()
 
 	return
 }
@@ -80,7 +83,9 @@ func (d *driver) Get(_ context.Context, key, rangeEnd string, limit, revision in
 
 	if val, err = d.store.Get(resourceType, resourceKey); err != nil {
 		if err == osclient.ErrKeyNotFound {
-			rev = d.revision.Load()
+			if rev, err = d.store.Revision(); err != nil {
+				return
+			}
 			err = nil
 		}
 		return
@@ -102,8 +107,10 @@ func (d *driver) List(_ context.Context, prefix, startKey string, limit, revisio
 		d.logMethod(dur, fStr, prefix, startKey, limit, revision, rev, len(kvs), err, dur)
 	}()
 
-	rev = d.revision.Load()
-	//rev = DefaultRevision
+	if rev, err = d.store.Revision(); err != nil {
+		return
+	}
+
 	resourceBundleKey, resourceNamePrefix := parsePrefix(prefix)
 
 	kvs, err = d.store.List(resourceBundleKey, resourceNamePrefix, limit)
@@ -122,10 +129,10 @@ func (d *driver) Create(_ context.Context, key string, value []byte, lease int64
 		d.logMethod(dur, fStr, key, len(value), lease, rev, err, dur)
 	}()
 
-	rev = d.revision.Add(1)
-	//rev = d.revision.Load()
+	if rev, err = d.store.IncrementRevision(); err != nil {
+		return
+	}
 
-	//rev = DefaultRevision
 	resourceType, resourceKey, err := parseKey(key)
 	if err != nil {
 		return
@@ -144,13 +151,9 @@ func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int6
 
 	defer func() {
 		dur := time.Since(start)
-		fStr := "msobjectstore driver.DELETE %s, ignored:revision=%d => rev=%d, kv=%d, success=%t, err=%v, duration=%s"
-		d.logMethod(dur, fStr, key, revision, revision, rev, err, dur)
+		fStr := "msobjectstore driver.DELETE %s, ignored:revision=%d => rev=%d, kv=%v, success=%t, err=%v, duration=%s"
+		d.logMethod(dur, fStr, key, revision, rev, kv, err, dur)
 	}()
-
-	// d.revision.Add(1)
-	// rev = d.revision.Load()
-	// rev = DefaultRevision
 
 	var resType, resKey string
 	if resType, resKey, err = parseKey(key); err != nil {
@@ -161,7 +164,10 @@ func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int6
 		return
 	}
 
-	rev = d.revision.Add(1)
+	if rev, err = d.store.IncrementRevision(); err != nil {
+		return
+	}
+
 	success = true
 
 	return
@@ -174,13 +180,9 @@ func (d *driver) Update(_ context.Context, key string, value []byte, revision, l
 
 	defer func() {
 		dur := time.Since(start)
-		fStr := "msobjectstore driver.UPDATE %s, size=%d, ignored:lease=%d => rev=%d, success=%t, err=%v, duration=%s"
-		d.logMethod(dur, fStr, key, len(value), lease, rev, success, err, dur)
+		fStr := "msobjectstore driver.UPDATE %s, size=%d, ignored:revision=%d, ignored:lease=%d => rev=%d, success=%t, err=%v, duration=%s"
+		d.logMethod(dur, fStr, key, len(value), revision, lease, rev, success, err, dur)
 	}()
-
-	//d.revision.Add(1)
-	//rev = d.revision.Load()
-	// rev = DefaultRevision
 
 	var resourceType, resourceKey string
 	if resourceType, resourceKey, err = parseKey(key); err != nil {
@@ -188,7 +190,9 @@ func (d *driver) Update(_ context.Context, key string, value []byte, revision, l
 
 	}
 
-	rev = d.revision.Add(1)
+	if rev, err = d.store.IncrementRevision(); err != nil {
+		return
+	}
 	kv := newKeyValue(key, value, 0, rev)
 	success, err = d.store.Update(resourceType, resourceKey, kv)
 
@@ -206,7 +210,9 @@ func (d *driver) Count(ctx context.Context, prefix string) (rev int64, count int
 		d.logMethod(dur, fStr, prefix, rev, count, err, dur)
 	}()
 
-	rev = d.revision.Load()
+	if rev, err = d.store.Revision(); err != nil {
+		return
+	}
 
 	var list []*server.KeyValue
 	if rev, list, err = d.List(ctx, prefix, "", 0, 0); err != nil {
@@ -262,12 +268,11 @@ func (d *driver) DbSize(_ context.Context) (size int64, err error) {
 }
 
 func (d *driver) logMethod(dur time.Duration, str string, args ...any) {
-	//if dur > d.slowThreshold {
-	//	logrus.Warnf(str, args...)
-	//} else {
-	//	logrus.Tracef(str, args...)
-	//}
-	logrus.Infof(str, args...)
+	if dur > d.slowThreshold {
+		logrus.Warnf(str, args...)
+	} else {
+		logrus.Infof(str, args...)
+	}
 }
 
 func formatKey(s string) (key string) {

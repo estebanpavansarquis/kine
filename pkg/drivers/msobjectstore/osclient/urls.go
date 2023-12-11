@@ -6,8 +6,8 @@ import "fmt"
 const (
 	// TODO resolve flex url ar start up
 	localHost          = "localhost"
-	dockerComposeHost  = "flex"
-	flexObjectStoreURL = "http://" + localHost + ":8081/api/v1"
+	dockerComposeHost  = "control-node-flex-1" // "flex"
+	flexObjectStoreURL = "http://" + dockerComposeHost + ":8081/api/v1"
 
 	getStoresEndpoint = "/stores"
 
@@ -17,6 +17,10 @@ const (
 	getKeysEndpointFmt         = "/stores/%s/partitions/%s/keys"
 	crudObjectEndpointFmt      = "/stores/%s/partitions/%s/keys/%s"
 )
+
+func getStoresURL() string {
+	return flexObjectStoreURL + getStoresEndpoint
+}
 
 func upsertStoreURL(store string) string {
 	return flexObjectStoreURL + fmt.Sprintf(upsertStoreEndpointFmt, store)

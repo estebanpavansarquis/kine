@@ -2,6 +2,7 @@ package osclient
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	types "github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex"
@@ -11,17 +12,11 @@ import (
 )
 
 const (
-	NotFoundIgnored    = true
-	NotFoundNotIgnored = false
-
 	controlNodeStore       = "control-node-store"
 	controlNodePartition   = "control-node-partition"
 	defaultTTLSeconds      = 1209600
 	defaultMaximumEntries  = time.Hour * 24
 	defaultConfirmationTTL = time.Second * 10
-
-	healthCheckKey   = "health"
-	healthCheckValue = "{\"health\":\"true\"}"
 )
 
 type ObjectStoreConsumer interface {
@@ -30,10 +25,14 @@ type ObjectStoreConsumer interface {
 	Create(bundleKey, resourceKey string, kv *server.KeyValue) (err error)
 	Update(bundleKey, resourceKey string, kv *server.KeyValue) (ok bool, err error)
 	Delete(bundleKey, resourceKey string) (old *server.KeyValue, err error)
-	HealthCheck() (ok bool, err error)
-	Watch(ctx context.Context, prefix string, ch chan []*server.Event) (Watcher, error)
-	Size() (size int64, err error)
 	GetBundle(bundleKey string) (Bundled, map[string]string, string, error)
+	Size() (size int64, err error)
+	Watch(ctx context.Context, prefix string, ch chan []*server.Event) (Watcher, error)
+	Status() (status Status, cas string, err error)
+	Revision() (rev int64, err error)
+	IncrementRevision() (rev int64, err error)
+	//Lock() (success bool, lockingKey string, err error)
+	//Unlock() (success bool, err error)
 }
 
 type consumer struct {
@@ -41,67 +40,26 @@ type consumer struct {
 	partition         string
 	objectStoreClient types.Storage
 	watchers          []Watcher
+	muRev             sync.RWMutex
 }
 
-func NewConsumer() ObjectStoreConsumer {
-	st := types.Store{
-		StoreID:                       controlNodeStore,
-		DefaultTTLSeconds:             defaultTTLSeconds,
-		MaximumEntries:                int(defaultMaximumEntries.Seconds()),
-		DefaultConfirmationTTLSeconds: int(defaultConfirmationTTL.Seconds()),
-	}
-
+func NewConsumer() (osc ObjectStoreConsumer, err error) {
 	osCli := NewClient()
-	// TODO: store can be already created by another replica
-	for {
-		err := osCli.UpsertStore(&st)
-		if err == nil {
-			break
-		}
-		time.Sleep(3 * time.Second)
-	}
 
-	return &consumer{
+	c := &consumer{
 		store:             controlNodeStore,
 		partition:         controlNodePartition,
 		objectStoreClient: osCli,
 	}
-}
 
-func (c *consumer) HealthCheck() (ok bool, err error) {
-	getHealthCommand := c.newGetCmd(healthCheckKey)
-
-	var healthGetResult types.GetResult
-	if healthGetResult, err = c.objectStoreClient.GetValue(getHealthCommand); err != nil {
-		if err == ErrKeyNotFound {
-			currentTime := time.Now().String()
-			healthStoreCommand := c.newStoreCmd(
-				healthCheckKey,
-				stubs.NewObject(
-					stubs.WithKey(healthCheckKey),
-					stubs.WithBinaryValue(healthCheckValue),
-					stubs.WithMetadata(map[string]string{
-						"health":  "true",
-						"created": currentTime,
-						"updated": currentTime,
-					}),
-				),
-			)
-			if err = c.objectStoreClient.Store(healthStoreCommand); err != nil {
-				return
-			}
-			logrus.Info("msobjectstore driver.Start: health check entry successfully stored")
-
-			return c.HealthCheck()
-		}
+	var s Status
+	if s, _, err = c.Status(); err != nil {
 		return
 	}
 
-	if healthGetResult.GetValue().BinaryValue != healthCheckValue {
-		err = ErrHealthCheckFailed
-	}
+	logrus.Infof("osclient NewConsumer: ObjectStoreConsumer was succefully created with status %s", s.String())
 
-	return
+	return c, nil
 }
 
 func (c *consumer) Get(bundleKey, resourceKey string) (res *server.KeyValue, err error) {
@@ -143,18 +101,24 @@ func (c *consumer) Create(bundleKey, resourceKey string, kv *server.KeyValue) (e
 	var getResult types.GetResult
 	resBundle := NewBundle()
 
+	var mustCreateBundle bool
 	getCommand := c.newGetCmd(bundleKey)
 	if getResult, err = c.objectStoreClient.GetValue(getCommand); err != nil {
 		if err != ErrKeyNotFound {
 			return
 		}
 		err = nil
+		mustCreateBundle = true
 	} else {
 		if _, ok := getResult.GetValue().Metadata[resourceKey]; ok {
 			err = ErrKeyAlreadyExists
 			return
 		}
 		if resBundle, err = parseBundle(getResult); err != nil {
+			return
+		}
+		if ok := resBundle.Contains(resourceKey); ok {
+			err = ErrKeyAlreadyExists
 			return
 		}
 	}
@@ -166,13 +130,20 @@ func (c *consumer) Create(bundleKey, resourceKey string, kv *server.KeyValue) (e
 		return
 	}
 
-	storeCommand := c.newStoreCmd(
-		bundleKey,
+	cas := mustCreateNewCAS
+	if !mustCreateBundle {
+		cas = getResult.GetVersion()
+	}
+	storeCommand := c.newStoreCmd(bundleKey,
 		stubs.NewObject(
 			stubs.WithKey(bundleKey),
 			stubs.WithBinaryValue(data),
 			stubs.WithMetadata(resBundle.Index()),
-		))
+		),
+		cas,
+		mustCreateBundle,
+	)
+
 	return c.objectStoreClient.Store(storeCommand)
 }
 
@@ -217,7 +188,10 @@ func (c *consumer) Update(bundleKey, resourceKey string, kv *server.KeyValue) (o
 			stubs.WithKey(bundleKey),
 			stubs.WithBinaryValue(data),
 			stubs.WithMetadata(resBundle.Index()),
-		))
+		),
+		getResult.GetVersion(),
+		false,
+	)
 	err = c.objectStoreClient.Store(storeCommand)
 
 	return
@@ -266,7 +240,10 @@ func (c *consumer) Delete(bundleKey, resourceKey string) (kv *server.KeyValue, e
 			stubs.WithKey(bundleKey),
 			stubs.WithBinaryValue(data),
 			stubs.WithMetadata(metadata),
-		))
+		),
+		getResult.GetVersion(),
+		false,
+	)
 	err = c.objectStoreClient.Store(storeCommand)
 
 	return
@@ -287,23 +264,6 @@ func (c *consumer) Size() (size int64, err error) {
 	return
 }
 
-func (c *consumer) newGetCmd(key string) types.GetCmd {
-	return types.NewGetCommand(
-		c.store,
-		c.partition,
-		key,
-	)
-}
-
-func (c *consumer) newStoreCmd(key string, value *types.Object) types.StoreCmd {
-	return types.NewStoreCmd(
-		c.store,
-		c.partition,
-		key,
-		value,
-	)
-}
-
 func (c *consumer) GetBundle(bundleKey string) (resBundle Bundled, index map[string]string, rev string, err error) {
 	getCommand := c.newGetCmd(bundleKey)
 
@@ -321,4 +281,31 @@ func (c *consumer) GetBundle(bundleKey string) (resBundle Bundled, index map[str
 	rev = getResult.GetVersion()
 
 	return
+}
+
+func (c *consumer) newGetCmd(key string) types.GetCmd {
+	return types.NewGetCommand(
+		c.store,
+		c.partition,
+		key,
+	)
+}
+
+func (c *consumer) newStoreCmd(key string, value *types.Object, cas string, mustCreate bool) types.StoreCmd {
+	if mustCreate || cas == mustCreateNewCAS {
+		return types.NewStoreCmd(
+			c.store,
+			c.partition,
+			key,
+			value,
+			types.WithNoneMatch("*"),
+		)
+	}
+	return types.NewStoreCmd(
+		c.store,
+		c.partition,
+		key,
+		value,
+		types.WithMatches(cas),
+	)
 }

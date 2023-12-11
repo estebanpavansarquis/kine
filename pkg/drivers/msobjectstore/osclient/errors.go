@@ -21,6 +21,7 @@ var (
 	ErrNullValue              = errors.New("ms-object-store-driver: invalid value, value must not be null")
 	ErrKeyCastingFailed       = errors.New("ms-object-store-driver: casting failed")
 	ErrMarshallFailed         = errors.New("ms-object-store-driver: marshall failed")
+	ErrUnarshallFailed        = errors.New("ms-object-store-driver: unmarshall failed")
 	ErrHashingFailed          = errors.New("ms-object-store-driver: hashing failed")
 	ErrBucketNotFound         = errors.New("ms-object-store-driver: bucket not found")
 	ErrBadBucket              = errors.New("ms-object-store-driver: bucket not valid key-value store")
@@ -29,7 +30,7 @@ var (
 	ErrKeyDeleted             = errors.New("ms-object-store-driver: key was deleted")
 	ErrHistoryToLarge         = errors.New("ms-object-store-driver: history limited to a max of 64")
 	ErrNoKeysFound            = errors.New("ms-object-store-driver: no keys found")
-	ErrHealthCheckFailed      = errors.New("ms-object-store-driver: health check failed")
+	ErrStatusCheckFailed      = errors.New("ms-object-store-driver: status check failed")
 )
 
 // Client Errors

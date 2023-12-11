@@ -18,17 +18,11 @@ type Bundled interface {
 	List(string, int64) []*server.KeyValue
 	Encode() (string, error)
 	Index() map[string]string
-	//Diff(Bundled) (added, modified, deleted []server.KeyValue, diff bool)
 }
 
 type resourceBundle struct {
 	Data map[string]*server.KeyValue `json:"data"`
 }
-
-//func (b *resourceBundle) Diff(b2 Bundled) (added, modified, deleted []server.KeyValue, diff bool) {
-//
-//	return nil, nil, nil, false
-//}
 
 func NewBundle() Bundled {
 	return &resourceBundle{Data: make(map[string]*server.KeyValue, 1)}

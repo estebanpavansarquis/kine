@@ -13,8 +13,11 @@ import (
 const (
 	defaultSlowThreshold = 500 * time.Millisecond
 	defaultTimeOut       = 2 * time.Second
-	requestContentType   = "application/json"
-	versionHeader        = "etag"
+
+	versionHeader           = "etag"     // cas id
+	ifMatchHeader           = "if-match" //  cas should match
+	requestContentType      = "Content-Type"
+	requestContentTypeValue = "application/json"
 )
 
 type store struct {
@@ -43,11 +46,15 @@ func (s *store) UpsertStore(store *types.Store) (err error) {
 		return
 	}
 
+	headers := map[string]string{
+		requestContentType: requestContentTypeValue,
+	}
+
 	var r *http.Response
 	if r, err = s.client.Put(
 		upsertStoreURL(store.StoreID),
-		requestContentType,
 		bytes.NewBuffer(body),
+		headers,
 	); err != nil {
 		return
 	}
@@ -65,10 +72,41 @@ func (s *store) UpsertStore(store *types.Store) (err error) {
 	return
 }
 
-func (s *store) GetStores() (*types.Stores, error) {
-	// TODO: define store and partition correctly
-	panic("implement me")
+func (s *store) GetStores() (stores *types.Stores, err error) {
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		var l int
+		if stores != nil {
+			l = len(stores.Values)
+		}
+		fmt := "msobjectstore Client.GetStores => len=%d, err=%v, duration=%s"
+		s.logMethod(dur, fmt, l, err, dur)
+	}()
 
+	var r *http.Response
+	if r, err = s.client.Get(getStoresURL()); err != nil {
+		return
+	}
+
+	defer func() {
+		if e := r.Body.Close(); e != nil {
+			logrus.Errorf("msobjectstore Client.UpsertStore ERROR when closing response body:%v", e)
+		}
+	}()
+
+	if r.StatusCode != http.StatusOK {
+		err = ErrClientResponseFailed
+		return
+	}
+
+	stores = new(types.Stores)
+	if err = json.NewDecoder(r.Body).Decode(&stores); err != nil {
+		logrus.Errorf("msobjectstore Client.GetKeys ERROR decoding response keys:%+v; error;%v", r.Body, err)
+		return
+	}
+
+	return
 }
 
 func (s *store) GetPartitions(store string) (*types.Partitions, error) {
@@ -140,10 +178,17 @@ func (s *store) Store(cmd types.StoreCmd) (err error) {
 		logrus.Infof("msobjectstore Client.Store JSON: %s, url: %s", string(prettyJSON.Bytes()), crudValueURL(cmd.GetStore(), cmd.GetPartition(), cmd.GetKey()))
 	*/
 
+	headers := map[string]string{
+		requestContentType: requestContentTypeValue,
+	}
+	if cmd.IsMatch() {
+		headers[ifMatchHeader] = cmd.GetMatchVersion()
+	}
+
 	if r, err = s.client.Post(
 		crudValueURL(cmd.GetStore(), cmd.GetPartition(), cmd.GetKey()),
-		requestContentType,
 		bytes.NewBuffer(body),
+		headers,
 	); err != nil {
 		logrus.Errorf("msobjectstore Client.Store ERROR: %v", err.Error())
 		return
@@ -219,6 +264,7 @@ func (s *store) GetValue(cmd types.GetCmd) (res types.GetResult, err error) {
 	return
 }
 
+// DeleteValue method not used
 func (s *store) DeleteValue(store, partition, key string) (err error) {
 	start := time.Now()
 	defer func() {
@@ -248,6 +294,7 @@ func (s *store) DeleteValue(store, partition, key string) (err error) {
 	return
 }
 
+// DeletePartition method not used
 func (s *store) DeletePartition(store, partition string) error {
 	//TODO implement me
 	panic("implement me")

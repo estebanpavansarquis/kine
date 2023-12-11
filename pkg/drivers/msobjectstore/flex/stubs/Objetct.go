@@ -39,10 +39,10 @@ func WithMetadata(metadata map[string]string) ObjectOption {
 	//}
 }
 
-func WithStringValue(val string) ObjectOption {
+func WithNumberValue(val int) ObjectOption {
 	return func(o *types.Object) {
-		o.ValueType = types.ObjectTypeString
-		o.StringValue = val
+		o.ValueType = types.ObjectTypeNumber
+		o.NumberValue = val
 	}
 }
 
