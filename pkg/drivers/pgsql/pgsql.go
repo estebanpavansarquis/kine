@@ -8,15 +8,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/estebanpavansarquis/kine/pkg/drivers/generic"
+	"github.com/estebanpavansarquis/kine/pkg/logstructured"
+	"github.com/estebanpavansarquis/kine/pkg/logstructured/sqllog"
+	"github.com/estebanpavansarquis/kine/pkg/server"
+	"github.com/estebanpavansarquis/kine/pkg/tls"
+	"github.com/estebanpavansarquis/kine/pkg/util"
 	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib" // sql driver
-	"github.com/k3s-io/kine/pkg/drivers/generic"
-	"github.com/k3s-io/kine/pkg/logstructured"
-	"github.com/k3s-io/kine/pkg/logstructured/sqllog"
-	"github.com/k3s-io/kine/pkg/server"
-	"github.com/k3s-io/kine/pkg/tls"
-	"github.com/k3s-io/kine/pkg/util"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )

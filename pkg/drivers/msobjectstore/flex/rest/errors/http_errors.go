@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex/sharedstorage/errors"
+	"github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex/sharedstorage/errors"
 )
 
 type HTTPError interface {

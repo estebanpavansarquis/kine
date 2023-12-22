@@ -6,7 +6,7 @@ import (
 	"hash/crc32"
 	"strings"
 
-	"github.com/k3s-io/kine/pkg/server"
+	"github.com/estebanpavansarquis/kine/pkg/server"
 	"github.com/sirupsen/logrus"
 )
 
