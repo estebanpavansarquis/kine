@@ -1,8 +1,8 @@
 package osclient
 
 import (
-	types "github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex"
-	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex/stubs"
+	types "github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex"
+	"github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex/stubs"
 	"github.com/sirupsen/logrus"
 )
 

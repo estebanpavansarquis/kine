@@ -1,8 +1,8 @@
 package osclient
 
 import (
-	types "github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex"
-	"github.com/k3s-io/kine/pkg/server"
+	types "github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex"
+	"github.com/estebanpavansarquis/kine/pkg/server"
 )
 
 func parseKeyValue(res types.GetResult, key string) (kv *server.KeyValue, err error) {

@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/osclient"
-	"github.com/k3s-io/kine/pkg/server"
-	"github.com/k3s-io/kine/pkg/tls"
+	"github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/osclient"
+	"github.com/estebanpavansarquis/kine/pkg/server"
+	"github.com/estebanpavansarquis/kine/pkg/tls"
 	"github.com/sirupsen/logrus"
 )
 

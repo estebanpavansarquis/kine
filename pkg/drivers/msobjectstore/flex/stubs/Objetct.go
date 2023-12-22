@@ -1,7 +1,7 @@
 package stubs
 
 import (
-	types "github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex"
+	types "github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex"
 )
 
 type ObjectOption = func(*types.Object)

@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	types "github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex"
-	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/flex/stubs"
-	"github.com/k3s-io/kine/pkg/server"
+	types "github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex"
+	"github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/flex/stubs"
+	"github.com/estebanpavansarquis/kine/pkg/server"
 	"github.com/sirupsen/logrus"
 )
 
