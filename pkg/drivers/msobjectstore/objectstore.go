@@ -3,7 +3,6 @@ package msobjectstore
 import (
 	"context"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/k3s-io/kine/pkg/drivers/msobjectstore/osclient"
@@ -22,7 +21,7 @@ const (
 type driver struct {
 	store         osclient.ObjectStoreConsumer
 	slowThreshold time.Duration
-	mut           sync.RWMutex
+	//mut           sync.RWMutex
 }
 
 func New(_ context.Context, _ string, _ tls.Config) (be server.Backend, err error) {
@@ -59,8 +58,8 @@ func (d *driver) Start(_ context.Context) (err error) {
 }
 
 func (d *driver) Get(_ context.Context, key, rangeEnd string, limit, revision int64) (rev int64, val *server.KeyValue, err error) {
-	d.mut.RLock()
-	defer d.mut.RUnlock()
+	//d.mut.RLock()
+	//defer d.mut.RUnlock()
 
 	start := time.Now()
 	defer func() {
@@ -97,8 +96,8 @@ func (d *driver) Get(_ context.Context, key, rangeEnd string, limit, revision in
 }
 
 func (d *driver) List(_ context.Context, prefix, startKey string, limit, revision int64) (rev int64, kvs []*server.KeyValue, err error) {
-	d.mut.RLock()
-	defer d.mut.RUnlock()
+	//d.mut.RLock()
+	//defer d.mut.RUnlock()
 
 	start := time.Now()
 	defer func() {
@@ -119,8 +118,8 @@ func (d *driver) List(_ context.Context, prefix, startKey string, limit, revisio
 }
 
 func (d *driver) Create(_ context.Context, key string, value []byte, lease int64) (rev int64, err error) {
-	d.mut.Lock()
-	defer d.mut.Unlock()
+	//d.mut.Lock()
+	//defer d.mut.Unlock()
 
 	start := time.Now()
 	defer func() {
@@ -146,8 +145,8 @@ func (d *driver) Create(_ context.Context, key string, value []byte, lease int64
 
 func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int64, kv *server.KeyValue, success bool, err error) {
 	start := time.Now()
-	d.mut.Lock()
-	defer d.mut.Unlock()
+	//d.mut.Lock()
+	//defer d.mut.Unlock()
 
 	defer func() {
 		dur := time.Since(start)
@@ -160,11 +159,11 @@ func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int6
 		return
 	}
 
-	if kv, err = d.store.Delete(resType, resKey); err != nil {
+	if rev, err = d.store.IncrementRevision(); err != nil {
 		return
 	}
 
-	if rev, err = d.store.IncrementRevision(); err != nil {
+	if kv, err = d.store.Delete(resType, resKey); err != nil {
 		return
 	}
 
@@ -175,8 +174,8 @@ func (d *driver) Delete(_ context.Context, key string, revision int64) (rev int6
 
 func (d *driver) Update(_ context.Context, key string, value []byte, revision, lease int64) (rev int64, val *server.KeyValue, success bool, err error) {
 	start := time.Now()
-	d.mut.Lock()
-	defer d.mut.Unlock()
+	//d.mut.Lock()
+	//defer d.mut.Unlock()
 
 	defer func() {
 		dur := time.Since(start)
@@ -200,8 +199,8 @@ func (d *driver) Update(_ context.Context, key string, value []byte, revision, l
 }
 
 func (d *driver) Count(ctx context.Context, prefix string) (rev int64, count int64, err error) {
-	d.mut.RLock()
-	defer d.mut.RUnlock()
+	//d.mut.RLock()
+	//defer d.mut.RUnlock()
 
 	start := time.Now()
 	defer func() {
@@ -233,7 +232,7 @@ func (d *driver) Watch(ctx context.Context, prefix string, revision int64) <-cha
 	if err != nil {
 		return nil
 	}
-	watcher.Updates()
+	watcher.Updates(revision)
 	/*
 		go func() {
 			watcher.Updates()
@@ -259,11 +258,6 @@ func (d *driver) Watch(ctx context.Context, prefix string, revision int64) <-cha
 }
 
 func (d *driver) DbSize(_ context.Context) (size int64, err error) {
-	d.mut.RLock()
-	defer d.mut.RUnlock()
-
-	// fmt.Println("msobjectstore driver.DbSize()")
-
 	return d.store.Size()
 }
 

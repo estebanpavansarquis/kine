@@ -6,7 +6,7 @@ import "fmt"
 const (
 	// TODO resolve flex url ar start up
 	localHost          = "localhost"
-	dockerComposeHost  = "control-node-flex-1" // "flex"
+	dockerComposeHost  = "flexA" // control-node-flexA-1
 	flexObjectStoreURL = "http://" + dockerComposeHost + ":8081/api/v1"
 
 	getStoresEndpoint = "/stores"

@@ -253,6 +253,7 @@ func (c *consumer) Watch(ctx context.Context, key string, ch chan []*server.Even
 	return NewResourceWatcher(ctx, c, key, ch)
 }
 
+// TODO: should return size in bytes
 func (c *consumer) Size() (size int64, err error) {
 	var keys *types.Keys
 	if keys, err = c.objectStoreClient.GetKeys(controlNodeStore, controlNodePartition); err != nil {

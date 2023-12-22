@@ -9,15 +9,17 @@ import (
 )
 
 const (
-	updateInterval   = 10 * time.Second
+	updateInterval   = time.Second
 	updateBufferSize = 100
 	noPrefix         = ""
 	noLimit          = 0
 	initCAS          = "0" // check and save, optimistic locking mechanism
+
+	latestRevision = 0
 )
 
 type Watcher interface {
-	Updates() //<-chan []*server.Event
+	Updates(int64) //<-chan []*server.Event
 	Stop() error
 }
 
@@ -51,7 +53,7 @@ func (r *resourceWatcher) Stop() error {
 	return nil
 }
 
-func (r *resourceWatcher) Updates() { // <-chan []*server.Event {
+func (r *resourceWatcher) Updates(revision int64) { // <-chan []*server.Event {
 	var (
 		err     error
 		updates []*server.Event
@@ -60,7 +62,7 @@ func (r *resourceWatcher) Updates() { // <-chan []*server.Event {
 	t := time.NewTicker(updateInterval)
 	//ch := make(chan []*server.Event, updateBufferSize)
 
-	if updates, err = r.currentState(); err != nil {
+	if updates, err = r.currentState(revision); err != nil {
 		if err != ErrKeyNotFound {
 			logrus.Errorf("error checking current state at watcher %s with cas %s: %s", r.key, r.cas, err.Error())
 			return
@@ -102,7 +104,7 @@ func (r *resourceWatcher) Updates() { // <-chan []*server.Event {
 	return
 }
 
-func (r *resourceWatcher) currentState() (e []*server.Event, err error) {
+func (r *resourceWatcher) currentState(revision int64) (e []*server.Event, err error) {
 	var (
 		newBundle   Bundled
 		newIndex    map[string]string
@@ -116,8 +118,10 @@ func (r *resourceWatcher) currentState() (e []*server.Event, err error) {
 
 	e = make([]*server.Event, 0)
 	for _, kv := range r.actual.List(noPrefix, noLimit) {
-		kv := kv
-		e = append(e, creationEvent(kv))
+		if revision == latestRevision || kv.ModRevision > revision {
+			kv := kv
+			e = append(e, creationEvent(kv))
+		}
 	}
 
 	return
