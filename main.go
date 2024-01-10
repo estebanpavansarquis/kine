@@ -113,10 +113,10 @@ func run(c *cli.Context) error {
 	}
 	ctx := signals.SetupSignalContext()
 
-	metricsConfig.ServerTLSConfig = config.ServerTLSConfig
-	go metrics.Serve(ctx, metricsConfig)
-	config.MetricsRegisterer = metrics.Registry
-	_, err := endpoint.Listen(ctx, config)
+	//metricsConfig.ServerTLSConfig = config.ServerTLSConfig
+	//go metrics.Serve(ctx, metricsConfig)
+	//config.MetricsRegisterer = metrics.Registry
+	err := endpoint.Listen(ctx)
 	if err != nil {
 		return err
 	}

@@ -5,9 +5,11 @@ import "fmt"
 // Client URLs formats
 const (
 	// TODO resolve flex url ar start up
-	localHost          = "localhost"
-	dockerComposeHost  = "flexA" // control-node-flexA-1
-	flexObjectStoreURL = "http://" + dockerComposeHost + ":8081/api/v1"
+	localHost                = "localhost"
+	dockerComposeHost        = "flexA" // control-node-flexA-1
+	integratedObjectStoreURL = "http://127.0.0.1:4000/api/v1"
+	flexObjectStoreURL       = "http://" + dockerComposeHost + ":8081/api/v1"
+	//flexObjectStoreURL = integratedObjectStoreURL
 
 	getStoresEndpoint = "/stores"
 

@@ -8,7 +8,6 @@ import (
 
 	"github.com/estebanpavansarquis/kine/pkg/drivers/generic"
 	"github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore"
-	"github.com/estebanpavansarquis/kine/pkg/metrics"
 	"github.com/estebanpavansarquis/kine/pkg/server"
 	"github.com/estebanpavansarquis/kine/pkg/tls"
 	"github.com/pkg/errors"
@@ -17,7 +16,6 @@ import (
 	"github.com/soheilhy/cmux"
 	"go.etcd.io/etcd/server/v3/embed"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -31,6 +29,9 @@ const (
 	MySQLBackend         = "mysql"
 	PostgresBackend      = "postgres"
 	MSObjectStoreBackend = "ms-object-store"
+	ListenAddress        = "127.0.0.1:" + ListenPort
+	ListenPort           = "2379"
+	ListenNetwork        = "tcp"
 )
 
 type Config struct {
@@ -49,82 +50,55 @@ type ETCDConfig struct {
 	LeaderElect bool
 }
 
-func Listen(ctx context.Context, config Config) (ETCDConfig, error) {
-	var (
-		driver = MSObjectStoreBackend
-		dsn    = ""
-	)
+func Listen(ctx context.Context) error {
 
-	//driver, dsn := ParseStorageEndpoint(config.Endpoint)
-	//if driver == ETCDBackend {
-	//	return ETCDConfig{
-	//		Endpoints:   strings.Split(config.Endpoint, ","),
-	//		TLSConfig:   config.BackendTLSConfig,
-	//		LeaderElect: true,
-	//	}, nil
-	//}
-
-	logrus.Info("getting backend for endpoint: 25x " + config.Endpoint)
-	leaderelect, backend, err := getKineStorageBackend(ctx, driver, dsn, config)
-	if err != nil {
-		return ETCDConfig{}, errors.Wrap(err, "building kine")
-	}
-
-	if config.MetricsRegisterer != nil {
-		config.MetricsRegisterer.MustRegister(
-			metrics.SQLTotal,
-			metrics.SQLTime,
-			metrics.CompactTotal,
-		)
-	}
-
+	backend, err := msobjectstore.New()
 	if err := backend.Start(ctx); err != nil {
-		return ETCDConfig{}, errors.Wrap(err, "starting kine backend")
+		return errors.Wrap(err, "starting kine backend")
 	}
-	logrus.Info("started kine backend: " + config.Endpoint)
 
 	// set up GRPC server and register services
-	b := server.New(backend, endpointScheme(config))
-	grpcServer, err := grpcServer(config)
+	b := server.New(backend, "http")
+	grpcServer := grpcServer()
 	if err != nil {
-		return ETCDConfig{}, errors.Wrap(err, "creating GRPC server")
+		return errors.Wrap(err, "creating GRPC server")
 	}
 	b.Register(grpcServer)
 
 	// set up HTTP server with basic mux
-	httpServer := httpServer()
+	//httpServer := httpServer()
 
 	// Create raw listener and wrap in cmux for protocol switching
-	listener, err := createListener(config)
+	listener, err := net.Listen(ListenNetwork, ListenAddress)
 	if err != nil {
-		return ETCDConfig{}, errors.Wrap(err, "creating listener")
+		return errors.Wrap(err, "creating listener")
 	}
 	m := cmux.New(listener)
 
-	if config.ServerTLSConfig.CertFile != "" && config.ServerTLSConfig.KeyFile != "" {
-		// If using TLS, wrap handler in GRPC/HTTP switching handler and serve TLS
-		httpServer.Handler = grpcHandlerFunc(grpcServer, httpServer.Handler)
-		anyl := m.Match(cmux.Any())
-		go func() {
-			if err := httpServer.ServeTLS(anyl, config.ServerTLSConfig.CertFile, config.ServerTLSConfig.KeyFile); err != nil {
-				logrus.Errorf("Kine TLS server shutdown: %v", err)
-			}
-		}()
-	} else {
-		// If using plaintext, use cmux matching for GRPC/HTTP switching
-		grpcl := m.Match(cmux.HTTP2())
-		go func() {
-			if err := grpcServer.Serve(grpcl); err != nil {
-				logrus.Errorf("Kine GRPC server shutdown: %v", err)
-			}
-		}()
-		httpl := m.Match(cmux.HTTP1())
-		go func() {
-			if err := httpServer.Serve(httpl); err != nil {
-				logrus.Errorf("Kine HTTP server shutdown: %v", err)
-			}
-		}()
-	}
+	//if config.ServerTLSConfig.CertFile != "" && config.ServerTLSConfig.KeyFile != "" {
+	//	// If using TLS, wrap handler in GRPC/HTTP switching handler and serve TLS
+	//	httpServer.Handler = grpcHandlerFunc(grpcServer, httpServer.Handler)
+	//	anyl := m.Match(cmux.Any())
+	//	go func() {
+	//		if err := httpServer.ServeTLS(anyl, config.ServerTLSConfig.CertFile, config.ServerTLSConfig.KeyFile); err != nil {
+	//			logrus.Errorf("Kine TLS server shutdown: %v", err)
+	//		}
+	//	}()
+	//} else {
+	// If using plaintext, use cmux matching for GRPC/HTTP switching
+	grpcl := m.Match(cmux.HTTP2())
+	go func() {
+		if err := grpcServer.Serve(grpcl); err != nil {
+			logrus.Errorf("Kine GRPC server shutdown: %v", err)
+		}
+	}()
+	//httpl := m.Match(cmux.HTTP1())
+	//go func() {
+	//	if err := httpServer.Serve(httpl); err != nil {
+	//		logrus.Errorf("Kine HTTP server shutdown: %v", err)
+	//	}
+	//}()
+	//}
 
 	go func() {
 		if err := m.Serve(); err != nil {
@@ -133,14 +107,10 @@ func Listen(ctx context.Context, config Config) (ETCDConfig, error) {
 		}
 	}()
 
-	endpoint := endpointURL(config, listener)
+	endpoint := "http://127.0.0.1:" + ListenPort
 	logrus.Infof("Kine available at %s", endpoint)
 
-	return ETCDConfig{
-		LeaderElect: leaderelect,
-		Endpoints:   []string{endpoint},
-		TLSConfig:   tls.Config{},
-	}, nil
+	return nil
 }
 
 // endpointURL returns a URI string suitable for use as a local etcd endpoint.
@@ -204,12 +174,8 @@ func createListener(config Config) (ret net.Listener, rerr error) {
 
 // grpcServer returns either a preconfigured GRPC server, or builds a new GRPC
 // server using upstream keepalive defaults plus the local Server TLS configuration.
-func grpcServer(config Config) (*grpc.Server, error) {
-	if config.GRPCServer != nil {
-		return config.GRPCServer, nil
-	}
-
-	gopts := []grpc.ServerOption{
+func grpcServer() *grpc.Server {
+	opts := []grpc.ServerOption{
 		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
 			MinTime:             embed.DefaultGRPCKeepAliveMinTime,
 			PermitWithoutStream: false,
@@ -220,25 +186,17 @@ func grpcServer(config Config) (*grpc.Server, error) {
 		}),
 	}
 
-	if config.ServerTLSConfig.CertFile != "" && config.ServerTLSConfig.KeyFile != "" {
-		creds, err := credentials.NewServerTLSFromFile(config.ServerTLSConfig.CertFile, config.ServerTLSConfig.KeyFile)
-		if err != nil {
-			return nil, err
-		}
-		gopts = append(gopts, grpc.Creds(creds))
-	}
-
-	return grpc.NewServer(gopts...), nil
+	return grpc.NewServer(opts...)
 }
 
 // getKineStorageBackend parses the driver string, and returns a bool
 // indicating whether the backend requires leader election, and a suitable
 // backend datastore connection.
-func getKineStorageBackend(ctx context.Context, driver, dsn string, cfg Config) (bool, server.Backend, error) {
-	backend, err := msobjectstore.New(ctx, dsn, cfg.BackendTLSConfig)
-
-	return true, backend, err
-}
+//func getKineStorageBackend(ctx context.Context, driver, dsn string, cfg Config) (bool, server.Backend, error) {
+//	backend, err := msobjectstore.New(ctx, dsn, cfg.BackendTLSConfig)
+//
+//	return true, backend, err
+//}
 
 // ParseStorageEndpoint returns the driver name and endpoint string from a datastore endpoint URL.
 func ParseStorageEndpoint(storageEndpoint string) (string, string) {

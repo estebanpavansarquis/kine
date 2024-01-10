@@ -7,7 +7,6 @@ import (
 
 	"github.com/estebanpavansarquis/kine/pkg/drivers/msobjectstore/osclient"
 	"github.com/estebanpavansarquis/kine/pkg/server"
-	"github.com/estebanpavansarquis/kine/pkg/tls"
 	"github.com/sirupsen/logrus"
 )
 
@@ -24,7 +23,7 @@ type driver struct {
 	//mut           sync.RWMutex
 }
 
-func New(_ context.Context, _ string, _ tls.Config) (be server.Backend, err error) {
+func New() (be server.Backend, err error) {
 	logrus.Info("msobjectstore driver.New()")
 
 	var c osclient.ObjectStoreConsumer
