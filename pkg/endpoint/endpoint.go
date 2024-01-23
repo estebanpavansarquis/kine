@@ -65,9 +65,6 @@ func Listen(ctx context.Context) error {
 	}
 	b.Register(grpcServer)
 
-	// set up HTTP server with basic mux
-	//httpServer := httpServer()
-
 	// Create raw listener and wrap in cmux for protocol switching
 	listener, err := net.Listen(ListenNetwork, ListenAddress)
 	if err != nil {

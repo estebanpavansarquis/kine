@@ -53,8 +53,14 @@ func NewConsumer() (osc ObjectStoreConsumer, err error) {
 	}
 
 	var s Status
-	if s, _, err = c.Status(); err != nil {
-		return
+
+	for {
+		if s, _, err = c.Status(); err != nil {
+			logrus.Warnf("ControlNode ShareStorageConsumerClient: consumer could not init store %s, retriying in %s, error: %s", c.store, "3segs", err.Error())
+			time.Sleep(time.Second * 3)
+		} else {
+			break
+		}
 	}
 
 	logrus.Infof("osclient NewConsumer: ObjectStoreConsumer was succefully created with status %s", s.String())
